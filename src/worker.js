@@ -22,7 +22,20 @@ export default {async fetch(request,env){
  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),26000);
  try{
   const r=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{Authorization:'Bearer '+env.OPENAI_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({model:env.OPENAI_MODEL||'gpt-4.1-mini',instructions,input:JSON.stringify(context),max_output_tokens:1900,store:false,text:{format:{type:'json_object'}}}),signal:controller.signal});
-  const out=await r.json();if(!r.ok)return reply({error:r.status===429?'AI provider rate limit reached':'AI provider is unavailable or its billing is not configured'},502);
+  const out=await r.json();
+  if(!r.ok){
+    const code=String(out?.error?.code||out?.error?.type||'unknown').slice(0,70);
+    const messages={
+      insufficient_quota:'OpenAI API credit or project quota is insufficient. Check billing and limits.',
+      invalid_api_key:'OpenAI rejected the API key. Check OPENAI_API_KEY in Cloudflare.',
+      model_not_found:'The AI model is unavailable to this project. Check OPENAI_MODEL.',
+      permission_denied:'The API key lacks permission for the requested API or model.',
+      unsupported_parameter:'The AI model does not support this request format.',
+      invalid_request_error:'OpenAI rejected the request parameters.'
+    };
+    const message=messages[code]||(r.status===401?'OpenAI rejected API authentication.':r.status===403?'OpenAI denied the API request.':r.status===404?'The model or endpoint was not found.':r.status===429?'OpenAI returned a credit, quota, or rate limit.':r.status===400?'OpenAI rejected the request format.':r.status>=500?'OpenAI is temporarily unavailable.':'The AI provider rejected the request.');
+    return reply({error:message,provider_status:r.status,provider_code:code},502);
+  }
   let data;try{data=JSON.parse(out.output_text||out.output?.flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('')||'')}catch{return reply({error:'AI returned an invalid response. Try again.'},502)}
   if(weekly){if(!Array.isArray(data.days)||data.days.length!==7||data.days.some(d=>!Array.isArray(d.options)||d.options.length!==3))return reply({error:'AI returned an incomplete weekly plan. Try again.'},502)}else if(!Array.isArray(data.ideas))return reply({error:'AI returned an incomplete snack list. Try again.'},502);
   return reply({data});
