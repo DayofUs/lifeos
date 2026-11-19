@@ -43,3 +43,5 @@ A real multi-file installable progressive web application. Open it over HTTPS (n
 3. In Supabase Authentication -> URL Configuration, set Site URL to the deployed Worker address. Email confirmation must be enabled.
 4. In LifeOS -> Cloud, create a user account, confirm the email, log in and press Save to cloud.
 5. Cloud storage is a MANUAL BACKUP and does not merge data across devices.
+
+LifeOS automatic deployment setup — November 2026
