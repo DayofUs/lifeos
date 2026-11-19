@@ -66,25 +66,78 @@ async function authRequest(path,body){const r=await fetch(`${CONFIG.supabaseUrl}
 async function login(email,password){if(!CONFIG.supabaseUrl)throw Error('Configure the cloud endpoint first');session=await authRequest('token?grant_type=password',{email,password});localStorage.setItem('lifeos_session',JSON.stringify(session))}
 async function signup(email,password){if(!CONFIG.supabaseUrl)throw Error('Configure the cloud endpoint first');await authRequest('signup',{email,password})}
 async function token(){if(!session?.access_token)throw Error('Sign in first');const expire=session.expires_at||0;if(expire&&Date.now()/1000>expire-90){session=await authRequest('token?grant_type=refresh_token',{refresh_token:session.refresh_token});localStorage.setItem('lifeos_session',JSON.stringify(session))}return session.access_token}
-// Sync is intentionally per-account, single-user and conservative about conflicting devices.
-// Do not auto-upload until we have compared the local copy with the cloud.
+// Per-account baseline: a local edit is not a conflict if the cloud still has the
+// version last successfully saved/loaded by this browser.
 let syncMode='checking', syncTimer=null, syncBusy=false, syncPending=false;
+let cloudBaseline=null;
 function syncLabel(){if(!session?.user)return 'sign in to enable';return ({checking:'checking cloud',ready:'up to date',pending:'saving…',offline:'offline · saved locally',conflict:'different versions · action needed',error:'sync failed · retry',idle:'not started'})[syncMode]||syncMode}
-function setSyncMode(mode){syncMode=mode;const line=document.querySelector('[aria-live="polite"]');if(line)line.textContent='☁ '+syncLabel()}
-function signature(data){const d={...data};delete d.lastUpdated;delete d.cloud;return JSON.stringify(d)}
-async function fetchCloudRow(){const bearer=await token();const r=await fetch(`${CONFIG.supabaseUrl}/rest/v1/kitchen_state?user_id=eq.${encodeURIComponent(session.user.id)}&select=data,updated_at`,{headers:{apikey:CONFIG.supabaseAnonKey,Authorization:'Bearer '+bearer},cache:'no-store'});if(!r.ok)throw Error((await r.text()).slice(0,200));return (await r.json())[0]||null}
-async function cloudUpload(){const bearer=await token();const snapshot=JSON.parse(JSON.stringify(S));const r=await fetch(`${CONFIG.supabaseUrl}/rest/v1/kitchen_state?on_conflict=user_id`,{method:'POST',headers:{apikey:CONFIG.supabaseAnonKey,Authorization:'Bearer '+bearer,'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({user_id:session.user.id,data:snapshot})});if(!r.ok)throw Error((await r.text()).slice(0,200));return snapshot}
-function scheduleCloudSync(){if(!session?.user||!CONFIG.supabaseUrl)return;if(syncMode==='checking'||syncMode==='conflict'||syncMode==='idle')return;syncPending=true;setSyncMode(navigator.onLine?'pending':'offline');clearTimeout(syncTimer);syncTimer=setTimeout(flushCloudSync,1000)}
-async function flushCloudSync(){if(!session?.user||!syncPending||syncBusy||syncMode==='conflict'||syncMode==='checking')return;if(!navigator.onLine){setSyncMode('offline');return}syncBusy=true;syncPending=false;setSyncMode('pending');try{const snapshot=await cloudUpload();if(signature(snapshot)!==signature(S)){syncPending=true;setSyncMode('pending')}else setSyncMode('ready')}catch(e){syncPending=true;setSyncMode(navigator.onLine?'error':'offline');console.warn('LifeOS sync failure',e)}finally{syncBusy=false;if(syncPending&&navigator.onLine&&syncMode!=='conflict'&&syncMode!=='checking'){clearTimeout(syncTimer);syncTimer=setTimeout(flushCloudSync,5000)}}}
-async function initialiseCloudSync(){if(!session?.user||!CONFIG.supabaseUrl){setSyncMode('idle');return}clearTimeout(syncTimer);syncPending=false;setSyncMode('checking');try{const row=await fetchCloudRow();if(!row){setSyncMode('conflict');notify('No cloud copy yet. Use Save to cloud to start syncing.');return}const remote=row.data;if(signature(remote)===signature(S)){setSyncMode('ready');return}const localEmpty=signature(S)===signature(initial());
-if(localEmpty){storeCloudCopy(remote);setSyncMode('ready');notify('Kitchen restored from cloud');return}
-setSyncMode('conflict');notify('Local and cloud copies differ. Choose which one to keep in Cloud.');
-}catch(e){setSyncMode(navigator.onLine?'error':'offline');console.warn('LifeOS cloud startup failed',e)}}
-async function cloudDownload(){const row=await fetchCloudRow();if(!row)throw Error('No cloud backup yet');if(!confirm('Replace local changes with this saved cloud version?'))return false;clearTimeout(syncTimer);syncPending=false;storeCloudCopy(row.data);setSyncMode('ready');return true}
-async function manualCloudUpload(){if(syncMode==='conflict'&&!confirm('Your device and cloud copies differ. Overwrite the cloud backup with THIS device data?'))return false;clearTimeout(syncTimer);syncPending=false;setSyncMode('pending');await cloudUpload();setSyncMode('ready');return true}
-window.addEventListener('online',()=>{if(syncMode==='offline'||syncMode==='error'){if(syncPending)flushCloudSync();else initialiseCloudSync()}});
-window.addEventListener('visibilitychange',()=>{if(!document.hidden&&session?.user){if(syncMode==='offline'||syncMode==='error')initialiseCloudSync();else if(syncPending)flushCloudSync()}});
-function cloudPage(){return `${heading('Cloud account & backup','Connect your own Supabase project and securely save your Kitchen data.')}<div class="notice">${CONFIG.supabaseUrl?'Connection settings saved on this device. Sign in to enable automatic saves and cloud backups.':'First enter your Supabase Project URL and publishable key below. Do not enter a secret or service-role key.'}</div><div class="card"><h3>Connect Supabase</h3><form id="cloud-config-form" class="stack"><label class="label">Project URL</label><input class="field" id="supabase-url" type="url" required placeholder="https://your-project.supabase.co" value="${esc(CONFIG.supabaseUrl||'')}" autocomplete="off" spellcheck="false"><label class="label">Publishable key (sb_publishable_...)</label><input class="field" id="supabase-key" type="text" required placeholder="sb_publishable_..." value="${esc(CONFIG.supabaseAnonKey||'')}" autocomplete="off" spellcheck="false"><div class="buttons"><button class="button primary" type="submit">Save connection</button></div></form><p class="detail">Only use a publishable or legacy anon key. These settings stay in this browser and do not create a database account.</p></div>${session?.user?`<div class="card section"><h3>Signed in</h3><p class="lead">${esc(session.user.email||'Your account')}</p><div class="notice">Sync status: ${esc(syncLabel())}. Changes auto-save after the initial cloud comparison. If versions differ, choose Save to cloud or Load cloud backup deliberately.</div><div class="buttons"><button class="button primary" id="save-cloud">Save to cloud</button><button class="button" id="load-cloud">Load cloud backup</button><button class="button ghost" id="cloud-out">Sign out</button></div></div>`:`<div class="card section"><h3>Account access</h3><form id="cloud-login" class="stack"><label class="label">Email</label><input id="cloud-email" class="field" name="email" type="email" required autocomplete="email"><label class="label">Password</label><input id="cloud-password" class="field" name="password" type="password" minlength="8" required autocomplete="current-password"><div class="buttons"><button class="button primary">Sign in</button><button type="button" class="button" id="cloud-signup">Create account</button></div></form></div>`}<div class="card section"><h3>Before you save personal information</h3><div class="detail">Changes automatically save to your cloud account after you sign in and resolve any version differences. This is basic single-account syncing, not simultaneous multi-device editing. Each account can access only its own record using the RLS policies. Household sharing is not implemented. Do not put private medical or banking information in this prototype.</div></div>`}
+function setSyncMode(mode){syncMode=mode;const line=document.querySelector('[aria-live="polite"]');if(line)line.textContent='☁ '+syncLabel();const status=document.querySelector('#cloud-sync-status');if(status)status.textContent='Sync status: '+syncLabel()+'. Changes auto-save if cloud has not changed independently.'}
+function canonical(v){if(Array.isArray(v))return v.map(canonical);if(v&&typeof v==='object')return Object.fromEntries(Object.keys(v).sort().filter(k=>k!=='lastUpdated'&&k!=='cloud').map(k=>[k,canonical(v[k])]));return v}
+function signature(data){return JSON.stringify(canonical(data))}
+function baselineKey(){return 'lifeos_sync_baseline_v2:'+CONFIG.supabaseUrl+':'+session.user.id}
+function getBaseline(){try{return JSON.parse(localStorage.getItem(baselineKey())||'null')}catch{return null}}
+function rememberBaseline(snapshot,updatedAt){cloudBaseline={signature:signature(snapshot),updatedAt:updatedAt||null};localStorage.setItem(baselineKey(),JSON.stringify(cloudBaseline))}
+function cloudHeaders(bearer,extra={}){return {apikey:CONFIG.supabaseAnonKey,Authorization:'Bearer '+bearer,...extra}}
+async function fetchCloudRow(){const bearer=await token();const r=await fetch(`${CONFIG.supabaseUrl}/rest/v1/kitchen_state?user_id=eq.${encodeURIComponent(session.user.id)}&select=data,updated_at`,{headers:cloudHeaders(bearer),cache:'no-store'});if(!r.ok)throw Error((await r.text()).slice(0,200));return (await r.json())[0]||null}
+async function forceCloudUpload(snapshot){const bearer=await token();const now=new Date().toISOString();const r=await fetch(`${CONFIG.supabaseUrl}/rest/v1/kitchen_state?on_conflict=user_id`,{method:'POST',headers:cloudHeaders(bearer,{'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=representation'}),body:JSON.stringify({user_id:session.user.id,data:snapshot,updated_at:now})});if(!r.ok)throw Error((await r.text()).slice(0,250));const rows=await r.json();return rows[0]?.updated_at||now}
+async function safeCloudUpload(snapshot,baseline){
+ // Updated_at is changed on every write; update only the cloud revision we previously saw.
+ const bearer=await token();const now=new Date().toISOString();
+ const url=`${CONFIG.supabaseUrl}/rest/v1/kitchen_state?user_id=eq.${encodeURIComponent(session.user.id)}&updated_at=eq.${encodeURIComponent(baseline.updatedAt)}&select=updated_at`;
+ const r=await fetch(url,{method:'PATCH',headers:cloudHeaders(bearer,{'Content-Type':'application/json',Prefer:'return=representation'}),body:JSON.stringify({data:snapshot,updated_at:now})});
+ if(!r.ok)throw Error((await r.text()).slice(0,250));const rows=await r.json();
+ if(rows.length!==1){setSyncMode('conflict');notify('Cloud changed elsewhere. Review which version to keep.');return null}
+ return rows[0].updated_at;
+}
+function scheduleCloudSync(){if(!session?.user||!CONFIG.supabaseUrl)return;syncPending=true;if(syncMode==='checking'||syncMode==='conflict'||syncMode==='idle')return;setSyncMode(navigator.onLine?'pending':'offline');clearTimeout(syncTimer);syncTimer=setTimeout(flushCloudSync,1100)}
+async function flushCloudSync(){
+ if(!session?.user||!syncPending||syncBusy||syncMode==='conflict'||syncMode==='checking')return;
+ if(!navigator.onLine){setSyncMode('offline');return}
+ syncBusy=true;syncPending=false;setSyncMode('pending');
+ try{
+  const snapshot=JSON.parse(JSON.stringify(S));const current=signature(snapshot);
+  const base=cloudBaseline||getBaseline();
+  if(!base?.updatedAt){syncPending=true;setSyncMode('conflict');return}
+  if(current===base.signature){setSyncMode('ready');return}
+  const updatedAt=await safeCloudUpload(snapshot,base);
+  if(!updatedAt){syncPending=true;return}
+  rememberBaseline(snapshot,updatedAt);
+  if(signature(S)!==current){syncPending=true;setSyncMode('pending')}else setSyncMode('ready');
+ }catch(e){syncPending=true;setSyncMode(navigator.onLine?'error':'offline');console.warn('LifeOS sync failure',e)}
+ finally{syncBusy=false;if(syncPending&&navigator.onLine&&syncMode!=='conflict'&&syncMode!=='checking'){clearTimeout(syncTimer);syncTimer=setTimeout(flushCloudSync,5000)}}
+}
+async function initialiseCloudSync(){
+ if(!session?.user||!CONFIG.supabaseUrl){setSyncMode('idle');return}
+ if(syncBusy)return;
+ clearTimeout(syncTimer);setSyncMode('checking');
+ try{
+  const row=await fetchCloudRow();const base=getBaseline();cloudBaseline=base;
+  if(!row){syncPending=true;setSyncMode('conflict');notify('No cloud copy yet. Use Save to cloud to start syncing.');return}
+  const remoteSig=signature(row.data),localSig=signature(S);
+  if(remoteSig===localSig){rememberBaseline(row.data,row.updated_at);syncPending=false;setSyncMode('ready');return}
+  if(base&&base.signature===remoteSig){
+    // Only this device has changed. Cloud has not changed since our last sync.
+    cloudBaseline={signature:remoteSig,updatedAt:row.updated_at};syncPending=true;setSyncMode('pending');syncTimer=setTimeout(flushCloudSync,200);return;
+  }
+  if(base&&base.signature===localSig){
+    // Only the cloud has changed, e.g. from another device.
+    storeCloudCopy(row.data);rememberBaseline(row.data,row.updated_at);syncPending=false;setSyncMode('ready');notify('Updated Kitchen from cloud');return;
+  }
+  // No known common ancestor, or both sides changed: require explicit choice.
+  syncPending=true;setSyncMode('conflict');notify('Local and cloud copies differ. Choose which one to keep in Cloud.');
+ }catch(e){syncPending=true;setSyncMode(navigator.onLine?'error':'offline');console.warn('LifeOS cloud startup failed',e)}
+}
+async function cloudDownload(){const row=await fetchCloudRow();if(!row)throw Error('No cloud backup yet');if(!confirm('Replace local changes with this saved cloud version?'))return false;clearTimeout(syncTimer);syncPending=false;storeCloudCopy(row.data);rememberBaseline(row.data,row.updated_at);setSyncMode('ready');return true}
+async function manualCloudUpload(){
+ if(syncMode==='conflict'&&!confirm('Your device and cloud copies differ. Overwrite the cloud backup with THIS device data?'))return false;
+ clearTimeout(syncTimer);syncPending=false;setSyncMode('pending');const snapshot=JSON.parse(JSON.stringify(S));
+ const updatedAt=await forceCloudUpload(snapshot);rememberBaseline(snapshot,updatedAt);
+ if(signature(S)!==signature(snapshot)){syncPending=true;setSyncMode('pending');syncTimer=setTimeout(flushCloudSync,300)}else setSyncMode('ready');
+ return true;
+}
+window.addEventListener('online',()=>{if(session?.user){if(syncPending&&syncMode!=='conflict'&&syncMode!=='checking')flushCloudSync();else initialiseCloudSync()}});
+window.addEventListener('visibilitychange',()=>{if(!document.hidden&&session?.user){if(syncMode==='offline'||syncMode==='error')initialiseCloudSync();else if(syncPending&&syncMode!=='conflict')flushCloudSync()}});
+function cloudPage(){return `${heading('Cloud account & backup','Connect your own Supabase project and securely save your Kitchen data.')}<div class="notice">${CONFIG.supabaseUrl?'Connection settings saved on this device. Sign in to enable automatic saves and cloud backups.':'First enter your Supabase Project URL and publishable key below. Do not enter a secret or service-role key.'}</div><div class="card"><h3>Connect Supabase</h3><form id="cloud-config-form" class="stack"><label class="label">Project URL</label><input class="field" id="supabase-url" type="url" required placeholder="https://your-project.supabase.co" value="${esc(CONFIG.supabaseUrl||'')}" autocomplete="off" spellcheck="false"><label class="label">Publishable key (sb_publishable_...)</label><input class="field" id="supabase-key" type="text" required placeholder="sb_publishable_..." value="${esc(CONFIG.supabaseAnonKey||'')}" autocomplete="off" spellcheck="false"><div class="buttons"><button class="button primary" type="submit">Save connection</button></div></form><p class="detail">Only use a publishable or legacy anon key. These settings stay in this browser and do not create a database account.</p></div>${session?.user?`<div class="card section"><h3>Signed in</h3><p class="lead">${esc(session.user.email||'Your account')}</p><div class="notice" id="cloud-sync-status">Sync status: ${esc(syncLabel())}. Changes auto-save if cloud has not changed independently.</div><div class="buttons"><button class="button primary" id="save-cloud">Save to cloud</button><button class="button" id="load-cloud">Load cloud backup</button><button class="button ghost" id="cloud-out">Sign out</button></div></div>`:`<div class="card section"><h3>Account access</h3><form id="cloud-login" class="stack"><label class="label">Email</label><input id="cloud-email" class="field" name="email" type="email" required autocomplete="email"><label class="label">Password</label><input id="cloud-password" class="field" name="password" type="password" minlength="8" required autocomplete="current-password"><div class="buttons"><button class="button primary">Sign in</button><button type="button" class="button" id="cloud-signup">Create account</button></div></form></div>`}<div class="card section"><h3>Before you save personal information</h3><div class="detail">Changes automatically save to your cloud account after you sign in and resolve any version differences. This is basic single-account syncing, not simultaneous multi-device editing. Each account can access only its own record using the RLS policies. Household sharing is not implemented. Do not put private medical or banking information in this prototype.</div></div>`}
 
 function bind(){
  $('#cloud-config-form')?.addEventListener('submit',saveCloudConfig);
@@ -101,7 +154,7 @@ function bind(){
  $('#load-cloud')?.addEventListener('click',async()=>{try{if(await cloudDownload())notify('Cloud backup loaded')}catch(e){notify('Cloud load failed: '+e.message)}});
  $('#cloud-login')?.addEventListener('submit',async e=>{e.preventDefault();let f=new FormData(e.target);try{await login(String(f.get('email')),String(f.get('password')));notify('Signed in');render();initialiseCloudSync()}catch(e){notify('Sign in failed: '+e.message)}});
  $('#cloud-signup')?.addEventListener('click',async()=>{let email=$('#cloud-email')?.value,password=$('#cloud-password')?.value;try{await signup(email,password);notify('Account requested; check your email to verify')}catch(e){notify('Sign up failed: '+e.message)}});
- $('#cloud-out')?.addEventListener('click',()=>{clearTimeout(syncTimer);session=null;syncPending=false;syncMode='idle';localStorage.removeItem('lifeos_session');render()});
+ $('#cloud-out')?.addEventListener('click',()=>{clearTimeout(syncTimer);session=null;syncPending=false;cloudBaseline=null;syncMode='idle';localStorage.removeItem('lifeos_session');render()});
 document.querySelectorAll('[data-page]').forEach(el=>el.onclick=()=>navigate(el.dataset.page));$('#export-short').onclick=download;
 $('#add-pantry')?.addEventListener('submit',e=>{e.preventDefault();const f=new FormData(e.target),name=String(f.get('name')).trim(),qty=Number(f.get('qty')),unit=String(f.get('unit'));if(!name||!(qty>0))return;let p=S.pantry.find(x=>slug(x.name)===slug(name)&&x.unit===unit);if(p)p.qty+=qty;else S.pantry.push({name,qty,unit});save();notify('Pantry updated')});
 document.querySelectorAll('[data-edit]').forEach(el=>el.onclick=()=>{let i=+el.dataset.edit,p=S.pantry[i];let next=prompt(`New quantity for ${p.name} (${p.unit})`,p.qty);if(next===null)return;let n=Number(next);if(!Number.isFinite(n)||n<0)return notify('Enter a valid non-negative quantity');p.qty=n;if(n===0)S.pantry.splice(i,1);save()});
