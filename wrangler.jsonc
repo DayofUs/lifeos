@@ -1,8 +1,23 @@
 
 {
   "name": "lifeos-zac",
-  "compatibility_date": "2026-11-18",
+  "compatibility_date": "2026-11-19",
+  "main": "src/worker.js",
   "assets": {
-    "directory": "."
-  }
+    "directory": ".",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "ratelimits": [
+    {
+      "name": "AI_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 4,
+        "period": 60
+      }
+    }
+  ]
 }
