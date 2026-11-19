@@ -1,0 +1,7 @@
+
+README.md
+schema.sql
+wrangler.jsonc
+.assetsignore
+.git/
+.github/
