@@ -1,5 +1,7 @@
 
 {
+
+"keep_vars": true,
   "name": "lifeos-zac",
   "compatibility_date": "2026-11-19",
   "main": "src/worker.js",
