@@ -34,7 +34,12 @@ export default {async fetch(request,env){
       invalid_request_error:'OpenAI rejected the request parameters.'
     };
     const message=messages[code]||(r.status===401?'OpenAI rejected API authentication.':r.status===403?'OpenAI denied the API request.':r.status===404?'The model or endpoint was not found.':r.status===429?'OpenAI returned a credit, quota, or rate limit.':r.status===400?'OpenAI rejected the request format.':r.status>=500?'OpenAI is temporarily unavailable.':'The AI provider rejected the request.');
-    return reply({error:message,provider_status:r.status,provider_code:code},502);
+    // On 400 errors, include a short, scrubbed upstream diagnostic. Never return tokens or credentials.
+    const param=String(out?.error?.param||'').slice(0,80).replace(/[^a-zA-Z0-9_.\[\]-]/g,'');
+    let detail=String(out?.error?.message||'').slice(0,360);
+    detail=detail.replace(/sk-[A-Za-z0-9_-]+/gi,'[redacted]').replace(/sb_(?:secret|publishable)_[A-Za-z0-9_-]+/gi,'[redacted]').replace(/https?:\/\/[^\s]+/gi,'[url]');
+    const diagnostic=r.status===400?` (${param||'request'}: ${detail||'invalid request'})`:'';
+    return reply({error:message+diagnostic,provider_status:r.status,provider_code:code},502);
   }
   let data;try{data=JSON.parse(out.output_text||out.output?.flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('')||'')}catch{return reply({error:'AI returned an invalid response. Try again.'},502)}
   if(weekly){if(!Array.isArray(data.days)||data.days.length!==7||data.days.some(d=>!Array.isArray(d.options)||d.options.length!==3))return reply({error:'AI returned an incomplete weekly plan. Try again.'},502)}else if(!Array.isArray(data.ideas))return reply({error:'AI returned an incomplete snack list. Try again.'},502);
