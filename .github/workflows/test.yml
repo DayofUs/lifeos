@@ -1,0 +1,53 @@
+name: Test LifeOS
+
+on:
+  pull_request:
+  push:
+    branches:
+      - 'dev/**'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --check app.js
+      - run: node --check sw.js
+      - run: node --test
+
+  database:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: disposable-test-password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test permissions, concurrent saves, and backup restoration
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          set -o pipefail
+          docker exec -i "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres \
+            < test/database/bootstrap.sql
+          docker exec -i "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres \
+            < schema.sql
+          docker exec -i "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres \
+            < test/database/kitchen-state.sql
+          docker exec "$POSTGRES_CONTAINER" createdb -U postgres restored
+          docker exec "$POSTGRES_CONTAINER" pg_dump -U postgres postgres \
+            | docker exec -i "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres -d restored
+          docker exec -i "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres -d restored \
+            < test/database/restored.sql

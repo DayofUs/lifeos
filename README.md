@@ -45,3 +45,11 @@ A real multi-file installable progressive web application. Open it over HTTPS (n
 5. Cloud storage is a MANUAL BACKUP and does not merge data across devices.
 
 LifeOS automatic deployment setup — November 2026
+
+## Development branch checks
+
+Run `node --test` with Node.js 24. To open the static shell locally, run
+`python3 -m http.server 8080` and visit http://localhost:8080. Live AI requires
+a Worker with a Supabase test project, server-side OpenAI key and the rate
+limiter binding. Use a distinct Worker name and test data for a hosted preview.
+See [the repository audit and staged plan](docs/audit.md).
