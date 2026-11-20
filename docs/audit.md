@@ -41,3 +41,13 @@ confirm. This preserves the original device-only copy. Account drafts are still
 stored in the browser, so this separation prevents accidental mixing in the app
 and does not encrypt browser storage. Shared users should use separate browser
 profiles for privacy.
+
+### Database checks
+
+The GitHub Actions database job loads the actual `schema.sql` into disposable
+PostgreSQL. It uses fake accounts and a minimal Supabase role fixture to test
+account permissions and snapshot updates. It also dumps and restores the test
+database, then checks that both snapshots, the saved revision and read
+permissions survived. This job connects only to its own local test database.
+A hosted Supabase preview still needs end-to-end sign-in and two-device tests
+through the real API.
