@@ -34,7 +34,7 @@ function notify(msg){document.querySelector('.toast')?.remove();let t=document.c
 function needed(){if(S.weeklyChoices?.active)return neededForSelectedAI();let tally=new Map();function add(name,qty,unit){const key=slug(name)+'|'+unit;const entry=tally.get(key)||{name,qty:0,unit};entry.qty+=qty;tally.set(key,entry)}const factor=Number(S.settings.servings)/2;S.plan.forEach((id,i)=>{if(S.cooked.includes(i))return;let r=RECIPES.find(r=>r.id===id);r?.ingredients.forEach(([name,q,u])=>add(name,q*factor,u))});if(S.breakfast==='mix'||S.breakfast==='oats'){add('Oats',S.breakfast==='oats'?560:320,'g');add('Milk',S.breakfast==='oats'?1400:800,'ml');add('Bananas',S.breakfast==='oats'?7:4,'pieces')};if(S.breakfast==='mix'||S.breakfast==='weetbix'){add('Weet-Bix',S.breakfast==='weetbix'?70:30,'pieces');add('Milk',S.breakfast==='weetbix'?1400:600,'ml')};if(S.lunch==='mix'||S.lunch==='tuna'){let f=S.lunch==='tuna'?5/3:1;add('Pasta',Math.ceil(450*f),'g');add('Tinned tuna',Math.ceil(6*f),'tins');add('Mayonnaise',Math.ceil(100*f),'g');add('Cucumber',Math.ceil(200*f),'g')};if(S.lunch==='mix'||S.lunch==='wraps'){let f=S.lunch==='wraps'?5/2:1;add('Chicken breast',Math.ceil(400*f),'g');add('Wraps',Math.ceil(4*f),'pieces');add('Salad mix',Math.ceil(150*f),'g')};S.extras.forEach(x=>add(x.name,x.qty,x.unit));return [...tally.values()].map(r=>{const owned=S.pantry.filter(p=>slug(p.name)===slug(r.name)&&p.unit===r.unit).reduce((a,p)=>a+p.qty,0);return {...r,owned,missing:Math.max(0,Math.round((r.qty-owned)*10)/10)}}).filter(x=>x.missing>0).sort((a,b)=>a.name.localeCompare(b.name))}
 function icon(name){const icons={Home:'⌂',Pantry:'▤',Meals:'◫',Ideas:'✦','AI Studio':'✧',Snacks:'◈',Equipment:'⚒',Shopping:'▣',Reminders:'◷','Smart Swaps':'↔',Cloud:'☁',Settings:'⚙'};return icons[name]||'•'}
 function navigate(p){page=(p==='Ideas'||p==='AI Studio')?'Meals':p;render();window.scrollTo({top:0,behavior:'instant'})}
-function render(){let needs=needed();const nav=['Home','Meals','Pantry','Shopping','Cloud','Settings','Equipment','Reminders','Smart Swaps'];const primary=nav.slice(0,4);$('#app').innerHTML=`<div class="shell"><aside class="sidebar"><div class="brand">Life<span>OS</span><span style="font-weight:400"> / Kitchen</span></div><div class="sub">YOUR PERSONAL FOOD SYSTEM</div><nav class="nav">${nav.map(x=>`<button class="${x===page?'active':''}" data-page="${x}">${icon(x)} &nbsp; ${x}</button>`).join('')}</nav><div class="sidebar-footer">● Saved on this device<br>Cloud sync: ${esc(syncLabel())}<br>Keep a backup in Settings</div></aside><main class="main"><header class="top"><div class="eyebrow">LifeOS / ${esc(page)}</div><button class="button ghost" id="export-short">↓ Backup</button><span class="detail" aria-live="polite">☁ ${esc(syncLabel())}</span></header>${page==='Cook'?cookingView():page==='Home'?home(needs):page==='Pantry'?pantry():page==='Meals'?meals():page==='Shopping'?shopping(needs):page==='Snacks'?snacks():page==='Equipment'?equipment():page==='Reminders'?reminders():page==='Smart Swaps'?swaps():page==='Cloud'?cloudPage():settings()}<div class="footer">LifeOS Kitchen v2 · Local mode available · Secure cloud requires setup</div></main></div><nav class="mobile-nav hide-desktop">${primary.map(x=>`<button class="${x===page?'active':''}" data-page="${x}"><div style="font-size:20px">${icon(x)}</div>${x}</button>`).join('')}<button data-page="Settings">···<br>More</button></nav>`;bind()}
+function render(){let needs=needed();const nav=['Home','Meals','Pantry','Shopping','Cloud','Settings','Equipment','Reminders','Smart Swaps'];const primary=nav.slice(0,4);$('#app').innerHTML=`<div class="shell"><aside class="sidebar"><div class="brand">Life<span>OS</span><span style="font-weight:400"> / Kitchen</span></div><div class="sub">YOUR PERSONAL FOOD SYSTEM</div><nav class="nav">${nav.map(x=>`<button class="${x===page?'active':''}" data-page="${x}">${icon(x)} &nbsp; ${x}</button>`).join('')}</nav><div class="sidebar-footer">● Saved on this device<br>Cloud sync: ${esc(syncLabel())}<br>Keep a backup in Settings</div></aside><main class="main"><header class="top"><div class="eyebrow">LifeOS / ${esc(page)}</div><button class="button ghost" id="export-short">↓ Backup</button><span class="detail" aria-live="polite">☁ ${esc(syncLabel())}</span></header>${page==='Cook'?cookingView():page==='Home'?home(needs):page==='Pantry'?pantry():page==='Meals'?meals():page==='Shopping'?shopping(needs):page==='Snacks'?snacks():page==='Equipment'?equipment():page==='Reminders'?reminders():page==='Smart Swaps'?swaps():page==='Cloud'?cloudPage():settings()}<div class="footer">LifeOS Kitchen v2 · Local mode available · Secure cloud requires setup</div></main></div><nav class="mobile-nav hide-desktop">${primary.map(x=>`<button class="${x===page?'active':''}" data-page="${x}"><span class="nav-icon" aria-hidden="true">${icon(x)}</span>${x==='Home'?'Today':x}</button>`).join('')}<button data-page="Settings"><span class="nav-icon" aria-hidden="true">···</span>More</button></nav>`;bind()}
 function heading(t,s){return `<h1 class="title">${t}</h1><div class="lead">${s}</div>`}
 function home(needs){
  const day=(new Date().getDay()+6)%7;
@@ -42,17 +42,18 @@ function home(needs){
  const meal=active?selectedMeal(day,'dinner'):RECIPES.find(recipe=>recipe.id===S.plan[day])?.name;
  const key=choiceKey(day,'dinner');
  const detail=S.mealDetails[key];
- return `${heading('Today','')}`
-  + `<section class="card today-card"><div class="eyebrow">${DAY[day]} · Dinner</div>
+ const dateLabel=new Intl.DateTimeFormat('en-AU',{weekday:'long',day:'numeric',month:'long'}).format(new Date());
+ return `<div class="today-heading"><h1 class="title">Today</h1><p>${esc(dateLabel)}</p></div>`
+  + `<section class="card today-card"><div class="eyebrow">Tonight’s dinner</div>
   <h2>${esc(meal||'Dinner is open')}</h2><div class="buttons">
   ${active&&S.mealLogs[key]?.status?`<p>${esc(S.mealLogs[key].status==='cooked'?'Cooked':S.mealLogs[key].status)}</p>`:active&&isRecipe(detail)?`<button class="button primary" data-open-recipe="${key}">Cook with me</button>`
     :active&&meal?`<button class="button primary" data-meal-detail="${key}">Get tonight’s recipe</button>`:''}
   ${!active&&meal?`<button class="button" data-cook="${day}" ${S.cooked.includes(day)?'disabled':''}>${S.cooked.includes(day)?'Already cooked':'Mark as cooked'}</button>`:''}
   <button class="button" data-page="Meals">Plan my week</button></div></section>
-  <div class="two section"><section class="card"><h2>Pantry</h2><p>${S.pantry.length} recorded items</p>
-  <button class="button" data-page="Pantry">Open pantry</button></section>
-  <section class="card"><h2>Shopping</h2><p>${needs.length} ingredients to buy</p>
-  <button class="button" data-page="Shopping">Open shopping</button></section></div>`;
+  <div class="today-shortcuts section">
+   <button class="card today-link" data-page="Pantry"><span><strong>Pantry</strong><small>${S.pantry.length} recorded items</small></span><span aria-hidden="true">→</span></button>
+   <button class="card today-link" data-page="Shopping"><span><strong>Shopping</strong><small>${needs.length} ingredients to buy</small></span><span aria-hidden="true">→</span></button>
+  </div>`;
 }
 
 function cookingView(){
@@ -64,8 +65,8 @@ function cookingView(){
  ${step<0?`<h2>Ingredients</h2><ul>${recipe.ingredients.map(item=>`<li>${nfmt(item.quantity)} ${esc(item.unit)} ${esc(item.name)}</li>`).join('')}</ul>
  <button class="button primary" id="advance-cook">Cook with me</button>`
  :step<recipe.steps.length?`<h2 tabindex="-1" id="cook-step">Step ${step+1} of ${recipe.steps.length}</h2>
- <p class="cook-instruction">${esc(recipe.steps[step])}</p>
- <div class="buttons"><button class="button" id="previous-cook">Back</button><button class="button primary" id="advance-cook">Done</button></div>`
+ <progress class="cook-progress" value="${step+1}" max="${recipe.steps.length}" aria-label="Cooking progress"></progress><p class="cook-instruction">${esc(recipe.steps[step])}</p>
+ <div class="buttons"><button class="button" id="previous-cook">Back</button><button class="button primary" id="advance-cook">${step+1===recipe.steps.length?'Review and finish':'Next step'}</button></div>`
  :`<h2 tabindex="-1" id="cook-step">Confirm cooking</h2><p>This records the meal and deducts the listed quantities from matching pantry stock.</p>
  ${cooking.key.endsWith('|dinner')&&hasLinkedLunch(Number(cooking.key.split('|')[0])+1)?'<p><label><input id="leftovers-stored" type="checkbox"> I set aside the planned extra servings and cooled and refrigerated them safely.</label></p>':''}
  <div class="buttons"><button class="button" id="previous-cook">Back</button><button class="button primary" id="finish-cook">Confirm cooked</button></div>`}</section>`;
