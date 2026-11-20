@@ -1,3 +1,4 @@
+import { writeCloudSnapshot } from './cloud-sync.mjs';
 import { confirmCooking, dinnerServings, ingredientKey, isRecipe, linkedLunchSource, shoppingNeeds, syncDecision } from './kitchen.mjs';
 'use strict';
 const STORE='lifeos-kitchen-state-v2';const DAY=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
@@ -219,6 +220,7 @@ const CONFIG={...(window.LIFEOS_CONFIG||{})};
 try { const savedConfig=JSON.parse(localStorage.getItem('lifeos_supabase_settings')||'null'); if(savedConfig?.supabaseUrl&&savedConfig?.supabaseAnonKey)Object.assign(CONFIG,savedConfig); }catch{}
 function saveCloudConfig(e){
  e.preventDefault();
+ if(session?.user)return notify('Sign out before changing the cloud connection.');
  const url=document.querySelector('#supabase-url').value.trim().replace(/\/+$/,'');
  const key=document.querySelector('#supabase-key').value.trim();
  if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url))return notify('Enter your exact https://...supabase.co project URL');
@@ -245,15 +247,13 @@ function getBaseline(){try{return JSON.parse(localStorage.getItem(baselineKey())
 function rememberBaseline(snapshot,updatedAt){cloudBaseline={signature:signature(snapshot),updatedAt:updatedAt||null};localStorage.setItem(baselineKey(),JSON.stringify(cloudBaseline))}
 function cloudHeaders(bearer,extra={}){return {apikey:CONFIG.supabaseAnonKey,Authorization:'Bearer '+bearer,...extra}}
 async function fetchCloudRow(){const bearer=await token();const r=await fetch(`${CONFIG.supabaseUrl}/rest/v1/kitchen_state?user_id=eq.${encodeURIComponent(session.user.id)}&select=data,updated_at`,{headers:cloudHeaders(bearer),cache:'no-store'});if(!r.ok)throw Error((await r.text()).slice(0,200));return (await r.json())[0]||null}
-async function forceCloudUpload(snapshot){const bearer=await token();const now=new Date().toISOString();const r=await fetch(`${CONFIG.supabaseUrl}/rest/v1/kitchen_state?on_conflict=user_id`,{method:'POST',headers:cloudHeaders(bearer,{'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=representation'}),body:JSON.stringify({user_id:session.user.id,data:snapshot,updated_at:now})});if(!r.ok)throw Error((await r.text()).slice(0,250));const rows=await r.json();return rows[0]?.updated_at||now}
-async function safeCloudUpload(snapshot,baseline){
- // Updated_at is changed on every write; update only the cloud revision we previously saw.
- const bearer=await token();const now=new Date().toISOString();
- const url=`${CONFIG.supabaseUrl}/rest/v1/kitchen_state?user_id=eq.${encodeURIComponent(session.user.id)}&updated_at=eq.${encodeURIComponent(baseline.updatedAt)}&select=updated_at`;
- const r=await fetch(url,{method:'PATCH',headers:cloudHeaders(bearer,{'Content-Type':'application/json',Prefer:'return=representation'}),body:JSON.stringify({data:snapshot,updated_at:now})});
- if(!r.ok)throw Error((await r.text()).slice(0,250));const rows=await r.json();
- if(rows.length!==1){setSyncMode('conflict');notify('Cloud changed elsewhere. Review which version to keep.');return null}
- return rows[0].updated_at;
+async function safeCloudUpload(snapshot,observedRevision){
+ const bearer=await token();
+ const updatedAt=await writeCloudSnapshot({
+  endpoint:CONFIG.supabaseUrl,userId:session.user.id,headers:cloudHeaders(bearer),snapshot,observedRevision
+ });
+ if(!updatedAt){setSyncMode('conflict');notify('Cloud changed elsewhere. Review which version to keep.');}
+ return updatedAt;
 }
 function scheduleCloudSync(){if(!session?.user||!CONFIG.supabaseUrl)return;syncPending=true;if(syncMode==='checking'||syncMode==='conflict'||syncMode==='idle')return;setSyncMode(navigator.onLine?'pending':'offline');clearTimeout(syncTimer);syncTimer=setTimeout(flushCloudSync,1100)}
 async function flushCloudSync(){
@@ -265,7 +265,7 @@ async function flushCloudSync(){
   const base=cloudBaseline||getBaseline();
   if(!base?.updatedAt){syncPending=true;setSyncMode('conflict');return}
   if(current===base.signature){setSyncMode('ready');return}
-  const updatedAt=await safeCloudUpload(snapshot,base);
+  const updatedAt=await safeCloudUpload(snapshot,base.updatedAt);
   if(!updatedAt){syncPending=true;return}
   rememberBaseline(snapshot,updatedAt);
   if(signature(S)!==current){syncPending=true;setSyncMode('pending')}else setSyncMode('ready');
@@ -274,7 +274,7 @@ async function flushCloudSync(){
 }
 async function initialiseCloudSync(){
  if(!session?.user||!CONFIG.supabaseUrl){setSyncMode('idle');return}
- if(syncBusy)return;
+ if(syncBusy||syncMode==='checking')return;
  clearTimeout(syncTimer);setSyncMode('checking');
  try{
   const row=await fetchCloudRow();const base=getBaseline();cloudBaseline=base;
@@ -294,13 +294,35 @@ async function initialiseCloudSync(){
   syncPending=true;setSyncMode('conflict');notify('Local and cloud copies differ. Choose which one to keep in Cloud.');
  }catch(e){syncPending=true;setSyncMode(navigator.onLine?'error':'offline');console.warn('LifeOS cloud startup failed',e)}
 }
-async function cloudDownload(){const row=await fetchCloudRow();if(!row)throw Error('No cloud backup yet');if(!confirm('Replace local changes with this saved cloud version?'))return false;clearTimeout(syncTimer);syncPending=false;storeCloudCopy(row.data);rememberBaseline(row.data,row.updated_at);setSyncMode('ready');return true}
+async function cloudDownload(){
+ if(syncBusy||syncMode==='checking'){notify('Wait for the current sync to finish.');return false;}
+ syncBusy=true;
+ try{
+  const row=await fetchCloudRow();if(!row)throw Error('No cloud backup yet');
+  if(!confirm('Replace local changes with this saved cloud version?'))return false;
+  clearTimeout(syncTimer);syncPending=false;
+  storeCloudCopy(row.data);rememberBaseline(row.data,row.updated_at);setSyncMode('ready');return true;
+ }finally{syncBusy=false;}
+}
 async function manualCloudUpload(){
- if(syncMode==='conflict'&&!confirm('Your device and cloud copies differ. Overwrite the cloud backup with THIS device data?'))return false;
- clearTimeout(syncTimer);syncPending=false;setSyncMode('pending');const snapshot=JSON.parse(JSON.stringify(S));
- const updatedAt=await forceCloudUpload(snapshot);rememberBaseline(snapshot,updatedAt);
- if(signature(S)!==signature(snapshot)){syncPending=true;setSyncMode('pending');syncTimer=setTimeout(flushCloudSync,300)}else setSyncMode('ready');
- return true;
+ if(syncBusy||syncMode==='checking'){notify('Wait for the current sync to finish.');return false;}
+ syncBusy=true;
+ try{
+  const row=await fetchCloudRow();
+  const snapshot=JSON.parse(JSON.stringify(S));
+  const current=signature(snapshot);
+  const remote=row?signature(row.data):null;
+  const baseline=cloudBaseline||getBaseline();
+  if(row&&remote!==current&&remote!==baseline?.signature&&
+   !confirm('Replace the latest cloud copy with the data on this device?'))return false;
+  clearTimeout(syncTimer);syncPending=false;setSyncMode('pending');
+  const updatedAt=remote===current?row.updated_at:await safeCloudUpload(snapshot,row?.updated_at??null);
+  if(!updatedAt){syncPending=true;return false;}
+  rememberBaseline(snapshot,updatedAt);
+  if(signature(S)!==current){syncPending=true;setSyncMode('pending');syncTimer=setTimeout(flushCloudSync,300)}
+  else setSyncMode('ready');
+  return true;
+ }finally{syncBusy=false;}
 }
 window.addEventListener('online',()=>{if(session?.user){if(syncPending&&syncMode!=='conflict'&&syncMode!=='checking')flushCloudSync();else initialiseCloudSync()}});
 window.addEventListener('visibilitychange',()=>{if(!document.hidden&&session?.user){if(syncMode==='offline'||syncMode==='error')initialiseCloudSync();else if(syncPending&&syncMode!=='conflict')flushCloudSync()}});
@@ -367,7 +389,7 @@ function bind(){
  $('#load-cloud')?.addEventListener('click',async()=>{try{if(await cloudDownload())notify('Cloud backup loaded')}catch(e){notify('Cloud load failed: '+e.message)}});
  $('#cloud-login')?.addEventListener('submit',async e=>{e.preventDefault();let f=new FormData(e.target);try{await login(String(f.get('email')),String(f.get('password')));notify('Signed in');render();initialiseCloudSync()}catch(e){notify('Sign in failed: '+e.message)}});
  $('#cloud-signup')?.addEventListener('click',async()=>{let email=$('#cloud-email')?.value,password=$('#cloud-password')?.value;try{await signup(email,password);notify('Account requested; check your email to verify')}catch(e){notify('Sign up failed: '+e.message)}});
- $('#cloud-out')?.addEventListener('click',()=>{clearTimeout(syncTimer);session=null;syncPending=false;cloudBaseline=null;syncMode='idle';localStorage.removeItem('lifeos_session');render()});
+ $('#cloud-out')?.addEventListener('click',()=>{if(syncBusy||syncMode==='checking')return notify('Wait for the current sync to finish.');clearTimeout(syncTimer);session=null;syncPending=false;cloudBaseline=null;syncMode='idle';localStorage.removeItem('lifeos_session');render()});
 document.querySelectorAll('[data-page]').forEach(el=>el.onclick=()=>navigate(el.dataset.page));$('#export-short').onclick=download;
 $('#add-pantry')?.addEventListener('submit',e=>{e.preventDefault();const f=new FormData(e.target),name=String(f.get('name')).trim(),qty=Number(f.get('qty')),unit=String(f.get('unit'));if(!name||!(qty>0))return;let p=S.pantry.find(x=>slug(x.name)===slug(name)&&x.unit===unit);if(p)p.qty+=qty;else S.pantry.push({name,qty,unit});save();notify('Pantry updated')});
 document.querySelectorAll('[data-edit]').forEach(el=>el.onclick=()=>{let i=+el.dataset.edit,p=S.pantry[i];let next=prompt(`New quantity for ${p.name} (${p.unit})`,p.qty);if(next===null)return;let n=Number(next);if(!Number.isFinite(n)||n<0)return notify('Enter a valid non-negative quantity');p.qty=n;if(n===0)S.pantry.splice(i,1);save()});

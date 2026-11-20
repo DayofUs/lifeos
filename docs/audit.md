@@ -28,3 +28,7 @@ Keep Cloudflare Workers and static hosting, Supabase email authentication and RL
 Use Node.js 24 and run `node --test` at the repository root. Tests cover selected Kitchen rules, snapshot conflict decisions and mocked Worker authentication and request limits. The SQL policies still need an integration test against a non-production Supabase instance.
 
 For a phone smoke test, use a separate development URL and Supabase project. Generate a week, swap the dinner before a linked lunch, open the new recipe, check serving count, advance the cooking steps and confirm. Compare Pantry and Shopping before and after. Export a backup from Settings, import it in a separate browser profile and compare the plan, pantry and history. Use a second test account and two devices to verify access boundaries and conflicting edits before expanding sync.
+
+## Sync follow-up
+
+Manual saves now read the current cloud version before offering to replace it. Every update checks that version, and the first save leaves a row created concurrently by another device alone. This uses the existing schema. The new tests mock Supabase responses for concurrent creation and stale updates. Live two-device and row-level security checks remain pending.
