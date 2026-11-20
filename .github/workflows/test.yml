@@ -33,11 +33,11 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-    env:
-      POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
     steps:
       - uses: actions/checkout@v4
       - name: Test permissions, concurrent saves, and backup restoration
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
           set -o pipefail
           docker exec -i "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres \
