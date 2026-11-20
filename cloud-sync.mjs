@@ -27,3 +27,9 @@ export async function writeCloudSnapshot({ endpoint, userId, headers, snapshot, 
   const rows = await result.json();
   return rows.length === 1 ? rows[0].updated_at : null;
 }
+
+export function kitchenStorageKey(base, project, userId) {
+  return project && userId
+    ? base + ':account:' + JSON.stringify([project.replace(/\/+$/, ''), userId])
+    : base;
+}

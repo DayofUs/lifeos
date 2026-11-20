@@ -32,3 +32,12 @@ For a phone smoke test, use a separate development URL and Supabase project. Gen
 ## Sync follow-up
 
 Manual saves now read the current cloud version before offering to replace it. Every update checks that version, and the first save leaves a row created concurrently by another device alone. This uses the existing schema. The new tests mock Supabase responses for concurrent creation and stale updates. Live two-device and row-level security checks remain pending.
+
+Signed-in Kitchen drafts are now separated by Supabase project and account.
+A new account on a device starts from its own cloud copy when available.
+Device-only data from earlier versions remains available locally. To bring it
+into a signed-in account, use **Cloud → Copy device-only Kitchen data** and
+confirm. This preserves the original device-only copy. Account drafts are still
+stored in the browser, so this separation prevents accidental mixing in the app
+and does not encrypt browser storage. Shared users should use separate browser
+profiles for privacy.

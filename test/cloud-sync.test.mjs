@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { writeCloudSnapshot } from '../cloud-sync.mjs';
+import { kitchenStorageKey, writeCloudSnapshot } from '../cloud-sync.mjs';
 
 const params = { endpoint: 'https://example.invalid', userId: 'user-a',
   headers: { Authorization: 'Bearer test' }, snapshot: { pantry: [] },
@@ -34,4 +34,19 @@ test('a stale revision is reported as a conflict', async () => {
   const result = await writeCloudSnapshot({ ...params, observedRevision: '2026-11-20T00:00:00Z',
     send: async () => Response.json([]) });
   assert.equal(result, null);
+});
+
+test('local Kitchen copies are scoped by both account and Supabase project', () => {
+  const base = 'lifeos-kitchen-state-v2';
+  const project = 'https://example.supabase.co';
+  const alice = kitchenStorageKey(base, project, 'alice');
+  const bob = kitchenStorageKey(base, project, 'bob');
+  assert.notEqual(alice, bob);
+  assert.notEqual(alice, kitchenStorageKey(base, 'https://other.supabase.co', 'alice'));
+  assert.equal(alice, kitchenStorageKey(base, project + '/', 'alice'));
+  assert.equal(kitchenStorageKey(base, project, null), base);
+  const storage = new Map([[base, 'legacy pantry'], [alice, 'alice pantry']]);
+  assert.equal(storage.get(bob), undefined);
+  assert.equal(storage.get(base), 'legacy pantry');
+  assert.equal(storage.get(alice), 'alice pantry');
 });
